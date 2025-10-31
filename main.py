@@ -1,106 +1,165 @@
-# main.py
+# Atık Ayırma Botu ♻️
 import discord
 from discord.ext import commands
-import time
+import json
+import os
+import difflib
 
-
-TOKEN = "cencored"  # ⚠️ Buraya bot token'ını koy
-
+# 🔧 AYARLAR
+TOKEN = "IF U READ THIS UR ..................................."
+DATA_FILE = "waste_db.json"
 PREFIX = "/"
+INTENTS = discord.Intents.default()
+INTENTS.message_content = True
 
-intents = discord.Intents.default()
-intents.message_content = True
-intents.guilds = True
-intents.messages = True
+bot = commands.Bot(command_prefix=PREFIX, intents=INTENTS, help_command=None)
 
-bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None)
+# 📦 Varsayılan veritabanı
+DEFAULT_DB = {
+    "plastik şişe": {
+        "category": "Geri dönüşüm",
+        "note": "Kapağını çıkar, hafifçe durula, sıkıştırıp geri dönüşüm kutusuna at.",
+        "emoji": "♻️"
+    },
+    "cam şişe": {
+        "category": "Geri dönüşüm",
+        "note": "Kırık cam dikkat! Kırıksa özel kutu/geri dönüşüm merkezine.",
+        "emoji": "♻️"
+    },
+    "kağıt": {
+        "category": "Geri dönüşüm",
+        "note": "Temiz kağıtları geri dönüşüme at. Islak veya yağlıysa çöpe.",
+        "emoji": "📄"
+    },
+    "pil": {
+        "category": "Tehlikeli atık",
+        "note": "Pil ve aküler özel toplama noktalarına verilmeli.",
+        "emoji": "⚠️"
+    },
+    "organik atık": {
+        "category": "Kompost",
+        "note": "Yemek artıkları, meyve kabukları (et/yağlılar hariç) komposta uygundur.",
+        "emoji": "🌱"
+    }
+}
 
-guild_echo_state = {}  # sunucu bazlı echo açık/kapalı
-user_msg_times = {}
-MSG_WINDOW = 8
-MSG_LIMIT = 5
+# 🧠 Fonksiyonlar
+def load_db(path=DATA_FILE):
+    if not os.path.exists(path):
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(DEFAULT_DB, f, ensure_ascii=False, indent=2)
+        return DEFAULT_DB.copy()
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
+def save_db(db, path=DATA_FILE):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(db, f, ensure_ascii=False, indent=2)
+
+def find_best_match(query, db_keys, cutoff=0.6):
+    query_low = query.lower()
+    matches = difflib.get_close_matches(query_low, db_keys, n=3, cutoff=cutoff)
+    substring_matches = [k for k in db_keys if query_low in k]
+    result = substring_matches + [m for m in matches if m not in substring_matches]
+    return result
+
+def embed_for_item(name, info):
+    embed = discord.Embed(title=name.title(), description=info.get("note", ""), color=0x2ecc71)
+    embed.add_field(name="Kategori", value=info.get("category", "Bilinmiyor"), inline=True)
+    emoji = info.get("emoji", "")
+    if emoji:
+        embed.set_author(name=f"{emoji} Atık Ayır Bot")
+    return embed
+
+# 📂 Veritabanını yükle
+waste_db = load_db()
+
+# 🟢 BOT OLAYLARI
 @bot.event
 async def on_ready():
-    print(f"Giriş yapıldı: {bot.user} ({bot.user.id})")
-    print("Echo bot aktif! Prefix:", PREFIX)
+    print(f"Bot aktif oldu: {bot.user}")
+    await bot.change_presence(activity=discord.Game(name="Atıkları ayır | !yardım"))
 
-@bot.command(name="help")
-async def help_cmd(ctx):
-    txt = (
-        "**Echo Bot Komutları**\n"
-        f"`{PREFIX}echo on`  - Echo aç\n"
-        f"`{PREFIX}echo off` - Echo kapat\n"
-        f"`{PREFIX}help`     - Yardım menüsü\n\n"
-        "Bot kullanıcıların mesajlarını tekrarlar (bot mesajlarını değil).\n"
-        "Flood koruması aktif — spam atarsan echo geçici olarak durur."
+# 🧾 Komutlar
+@bot.command(name="yardım")
+async def yardım(ctx):
+    msg = (
+        "**Atık Ayır Botu ♻️**\n\n"
+        "Komutlar:\n"
+        "`!ayır <eşya>` → Eşyanın nereye gideceğini söyler.\n"
+        "`!liste <kelime>` → Benzer öğeleri gösterir.\n"
+        "`!ekle <eşya> | <kategori> | <not>` → (Sahip) Yeni öğe ekler.\n"
+        "`!kaydet` → Veritabanını kaydeder.\n\n"
+        "Örnek: `!ayır plastik şişe`\n"
     )
-    await ctx.send(txt)
+    await ctx.send(msg)
 
-@bot.command(name="echo")
-@commands.has_guild_permissions(manage_guild=True)
-async def echo_toggle(ctx, mode: str):
-    gid = ctx.guild.id
-    mode = mode.lower()
-    if mode not in ("on", "off"):
-        await ctx.send(f"Kullanım: `{PREFIX}echo on` veya `{PREFIX}echo off`")
-        return
-    guild_echo_state[gid] = (mode == "on")
-    await ctx.send(f"Echo {'aktif' if mode=='on' else 'kapalı'} (sunucu için).")
+@bot.command(name="ayır")
+async def ayir(ctx, *, item: str):
+    item_low = item.lower().strip()
+    keys = list(waste_db.keys())
 
-
-def is_flood(user_id):
-    now = time.time()
-    lst = user_msg_times.get(user_id, [])
-    lst = [t for t in lst if now - t <= MSG_WINDOW]
-    lst.append(now)
-    user_msg_times[user_id] = lst
-    return len(lst) > MSG_LIMIT
-
-@bot.event
-async def on_message(message: discord.Message):
-    # Komutları işleyelim
-    await bot.process_commands(message)
-
-    # Bot mesajlarını görmezden gel
-    if message.author.bot:
+    # Tam eşleşme
+    if item_low in waste_db:
+        info = waste_db[item_low]
+        await ctx.send(embed=embed_for_item(item_low, info))
         return
 
-    # DM değilse
-    if not message.guild:
+    # Yakın eşleşme
+    matches = find_best_match(item_low, keys, cutoff=0.55)
+    if matches:
+        best = matches[0]
+        info = waste_db[best]
+        e = embed_for_item(best, info)
+        e.set_footer(text=f"Benim tahminim: '{best}'. Eğer farklıysa `!liste {item}` yaz.")
+        await ctx.send(embed=e)
         return
 
-    gid = message.guild.id
+    await ctx.send(
+        f"'{item}' için kesin bilgi bulamadım 😅\n"
+        "Genel ipucu: cam/metal/plastik = **geri dönüşüm**, pil/yağ = **tehlikeli atık**."
+    )
 
-    # Echo açık mı kontrol et
-    if not guild_echo_state.get(gid, False):
+@bot.command(name="liste")
+async def liste(ctx, *, query: str):
+    keys = list(waste_db.keys())
+    matches = find_best_match(query.lower(), keys, cutoff=0.4)
+    if not matches:
+        await ctx.send("Benzer öğe bulunamadı 😕")
         return
+    out = "\n".join(f"- {m}" for m in matches[:10])
+    await ctx.send(f"Benzer öğeler:\n{out}")
 
-    # 💡 Komut mesajlarını echo’lama (örnek: /echo on veya /help)
-    if message.content.startswith(PREFIX):
+@bot.command(name="ekle")
+@commands.is_owner()
+async def ekle(ctx, *, payload: str):
+    parts = [p.strip() for p in payload.split("|")]
+    if len(parts) < 2:
+        await ctx.send("Format: `!ekle eşya | kategori | kısa not`")
         return
+    name = parts[0].lower()
+    category = parts[1]
+    note = parts[2] if len(parts) >= 3 else ""
+    waste_db[name] = {"category": category, "note": note, "emoji": "♻️"}
+    save_db(waste_db)
+    await ctx.send(f"`{name}` eklendi ✅ ({category})")
 
-    # Flood kontrolü
-    if is_flood(message.author.id):
-        await message.channel.send(f"{message.author.mention} çok hızlısın 😅 biraz yavaşla!")
-        return
+@bot.command(name="kaydet")
+@commands.is_owner()
+async def kaydet(ctx):
+    save_db(waste_db)
+    await ctx.send("Veritabanı kaydedildi 💾")
 
-    # Normal mesajları echo'la
-    text = message.content.strip()
-    if text:
-        await message.channel.send(f"{message.author.display_name} dedi ki: {text}")
-
-    # Dosyaları da echo'la
-    if message.attachments:
-        files = [await a.to_file() for a in message.attachments]
-        await message.channel.send(f"{message.author.display_name} bir dosya paylaştı:", files=files)
-
-
+# ⚠️ Hata yakalama
 @bot.event
 async def on_command_error(ctx, error):
-    if isinstance(error, commands.CommandNotFound):
-        return
-    await ctx.send(f"Hata: {error}")
-    print("Komut hatası:", error)
+    if isinstance(error, commands.NotOwner):
+        await ctx.send("Bu komut sadece bot sahibine açık 🚫")
+    elif isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("Eksik argüman! `!yardım` yaz bak 😉")
+    else:
+        await ctx.send(f"Bir hata oluştu: `{str(error)}`")
 
-bot.run(TOKEN)
+# 🚀 Botu çalıştır
+if __name__ == "__main__":
+    bot.run(TOKEN)
