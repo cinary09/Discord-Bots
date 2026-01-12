@@ -6,7 +6,7 @@ import os
 import difflib
 
 # 🔧 AYARLAR
-TOKEN = "IF U READ THIS UR ..................................."
+TOKEN = "IF U READ THIS UR ................................... are bitch u litte fella"
 DATA_FILE = "waste_db.json"
 PREFIX = "/"
 INTENTS = discord.Intents.default()
