@@ -1,2 +1,0 @@
-# tesstoo
-testoo taylan
